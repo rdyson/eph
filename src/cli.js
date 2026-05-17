@@ -69,6 +69,7 @@ function parseArgs(argv) {
     else if (arg === "--ttl") opts.ttlSeconds = parseDuration(argv[++i]);
     else if (arg === "--remote-pi") opts.remotePi = argv[++i];
     else if (arg === "--task") opts.task = argv[++i] || "";
+    else if (arg === "--json") positional.push(arg);
     else if (arg.startsWith("--")) throw new Error(`Unknown option: ${arg}`);
     else positional.push(arg);
   }
