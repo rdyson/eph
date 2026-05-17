@@ -1,15 +1,9 @@
+import { requireOpenAIAuth } from "./auth.js";
+
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 
 export function requireOpenAIConfig() {
-  const adminKey = process.env.OPENAI_ADMIN_KEY;
-  const projectId = process.env.OPENAI_PROJECT_ID;
-  if (!adminKey) {
-    throw new Error("OPENAI_ADMIN_KEY is required for managed OpenAI credentials.");
-  }
-  if (!projectId) {
-    throw new Error("OPENAI_PROJECT_ID is required for managed OpenAI credentials.");
-  }
-  return { adminKey, projectId };
+  return requireOpenAIAuth();
 }
 
 async function openAIRequest(path, options = {}) {

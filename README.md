@@ -86,16 +86,50 @@ node ./bin/eph.js --help
 
 ## Setup
 
-On your trusted local machine:
+On your trusted local machine, run:
+
+```bash
+eph auth setup
+```
+
+`eph` asks for:
+
+- OpenAI Admin key
+- OpenAI Project ID
+
+On macOS, `eph auth setup` stores them in Keychain by default. On other systems, it stores them in `~/.config/eph/config.json` with mode `0600` unless you choose another backend.
+
+Verify setup:
+
+```bash
+eph auth doctor
+```
+
+Verify that create/revoke works end-to-end:
+
+```bash
+eph auth doctor --live
+```
+
+You can also provide credentials with environment variables, which override stored config:
 
 ```bash
 export OPENAI_ADMIN_KEY="sk-admin-..."
 export OPENAI_PROJECT_ID="proj_..."
 ```
 
-Recommended: store these in 1Password, macOS Keychain, `pass`, or another local secret manager and export them only when needed.
+Never copy `OPENAI_ADMIN_KEY` to the remote host. `eph` uses it locally only to create and revoke disposable per-session keys.
 
-Never copy `OPENAI_ADMIN_KEY` to the remote host.
+### Credential responsibility
+
+You choose how to expose your OpenAI Admin key to `eph`: Keychain, local config file, environment variables, or a password-manager wrapper. `eph` does not claim to secure your local machine.
+
+What `eph` does guarantee:
+
+- it never intentionally sends `OPENAI_ADMIN_KEY` to the remote host
+- it never writes `OPENAI_ADMIN_KEY` into remote Pi config
+- it sends only a disposable per-session API key to the remote host
+- it revokes that disposable key when the session exits, when possible
 
 ## Quick start
 

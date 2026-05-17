@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { clearOpenAIAuth, keychainAvailable, loadOpenAIAuth, mask, saveOpenAIAuth } from "./auth.js";
 import {
   createOpenAISessionKey,
   ephKeyName,
@@ -23,6 +24,10 @@ Ephemeral AI sessions for remote machines.
 Usage:
   eph <ssh-host> [task...]              Start remote Pi with disposable OpenAI key
   eph --local [task...]                 Start local Pi with disposable OpenAI key
+  eph auth setup                        Store OpenAI Admin credentials locally
+  eph auth doctor [--live]              Check auth and optionally create/revoke a test key
+  eph auth show                         Show configured auth source, redacted
+  eph auth clear                        Remove eph-stored auth from this machine
   eph keys create [label]               Create an OpenAI session key and print it
   eph keys list                         List eph OpenAI service accounts
   eph keys revoke <id>                  Revoke an OpenAI service account
@@ -37,9 +42,9 @@ Options:
   --task <text>                         Initial prompt for Pi
   -h, --help                            Show help
 
-Environment for OpenAI managed mode:
-  OPENAI_ADMIN_KEY                      OpenAI Admin key. Keep this local, never on remote hosts.
-  OPENAI_PROJECT_ID                     Project where eph creates service accounts.
+OpenAI managed credential setup:
+  Run eph auth setup, or set OPENAI_ADMIN_KEY and OPENAI_PROJECT_ID.
+  The Admin key stays local. Remote hosts receive only disposable session keys.
 `;
 }
 
@@ -71,11 +76,19 @@ function parseArgs(argv) {
     else if (arg === "--ttl") opts.ttlSeconds = parseDuration(argv[++i]);
     else if (arg === "--remote-pi") opts.remotePi = argv[++i];
     else if (arg === "--task") opts.task = argv[++i] || "";
-    else if (arg === "--json" || arg === "--all") positional.push(arg);
+    else if (["--json", "--all", "--live", "--file", "--keychain"].includes(arg)) positional.push(arg);
     else if (arg.startsWith("--")) throw new Error(`Unknown option: ${arg}`);
     else positional.push(arg);
   }
   return { opts, positional };
+}
+
+async function prompt(label, defaultValue = "") {
+  const rl = createInterface({ input, output });
+  const suffix = defaultValue ? ` [${defaultValue}]` : "";
+  const value = await rl.question(`${label}${suffix}: `);
+  rl.close();
+  return value.trim() || defaultValue;
 }
 
 async function promptSecret(label) {
@@ -200,6 +213,66 @@ function runRemotePi({ host, provider, apiKey, task, remotePi }) {
   return result.status ?? 1;
 }
 
+async function authCommand(args) {
+  const sub = args[0] || "show";
+
+  if (sub === "setup") {
+    console.log("eph needs OpenAI Admin credentials on this local machine.");
+    console.log("They stay local; remote hosts receive only disposable session keys.\n");
+    const adminKey = await promptSecret("OpenAI Admin key: ");
+    const projectId = await prompt("OpenAI Project ID");
+    const defaultBackend = keychainAvailable() ? "keychain" : "file";
+    let backend = args.includes("--file") ? "file" : args.includes("--keychain") ? "keychain" : defaultBackend;
+    if (!args.includes("--file") && !args.includes("--keychain")) {
+      const label = keychainAvailable() ? "keychain recommended" : "file fallback";
+      backend = await prompt("Store credentials where? keychain/file", `${defaultBackend} (${label})`);
+      backend = backend.split(/\s+/)[0];
+    }
+    const result = saveOpenAIAuth({ backend, adminKey, projectId });
+    console.log(`Saved OpenAI Admin credentials to ${result.source}.`);
+    console.log("Run `eph auth doctor --live` to verify create/revoke access.");
+    return;
+  }
+
+  if (sub === "doctor") {
+    const live = args.includes("--live");
+    const auth = loadOpenAIAuth();
+    console.log(`Auth source: ${auth.source}`);
+    console.log(`OpenAI Admin key: ${mask(auth.adminKey)}`);
+    console.log(`OpenAI Project ID: ${mask(auth.projectId)}`);
+    if (!auth.adminKey || !auth.projectId) {
+      throw new Error("Auth is incomplete. Run `eph auth setup`.");
+    }
+    const serviceAccounts = await listOpenAISessionKeys();
+    console.log(`Admin API: OK (${serviceAccounts.length} project service account(s) visible)`);
+    if (live) {
+      const credential = await createOpenAISessionKey({ name: ephKeyName("doctor", 300) });
+      console.log(`Live create: OK (${credential.name})`);
+      await revokeIfManaged({ mode: "managed", ...credential });
+      console.log("Live revoke: OK");
+    } else {
+      console.log("Live create/revoke: skipped (pass --live to test)");
+    }
+    return;
+  }
+
+  if (sub === "show") {
+    const auth = loadOpenAIAuth();
+    console.log(`Auth source: ${auth.source}`);
+    console.log(`OpenAI Admin key: ${mask(auth.adminKey)}`);
+    console.log(`OpenAI Project ID: ${mask(auth.projectId)}`);
+    return;
+  }
+
+  if (sub === "clear") {
+    const path = clearOpenAIAuth();
+    console.log(`Cleared eph auth from Keychain (if present) and ${path}`);
+    return;
+  }
+
+  throw new Error(`Unknown auth command: ${sub}`);
+}
+
 async function keysCommand(args) {
   const sub = args[0] || "list";
   if (sub === "create") {
@@ -299,6 +372,10 @@ export async function main(argv) {
     return;
   }
 
+  if (positional[0] === "auth") {
+    await authCommand(positional.slice(1));
+    return;
+  }
   if (positional[0] === "keys") {
     await keysCommand(positional.slice(1));
     return;
