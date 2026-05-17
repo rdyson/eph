@@ -135,6 +135,14 @@ async function revokeIfManaged(credential) {
       return;
     } catch (error) {
       if (!String(error?.message || error).includes("owned by a service account")) throw error;
+      if (credential.id) {
+        try {
+          await revokeOpenAISessionKey(credential.id);
+          return;
+        } catch {
+          // Fall back to name lookup below. OpenAI response shapes differ by org.
+        }
+      }
       if (!credential.name) throw error;
       const count = await revokeOpenAISessionKeyByName(credential.name);
       if (count > 0) return;

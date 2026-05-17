@@ -177,10 +177,23 @@ export async function revokeOpenAISessionKey(id) {
 export async function revokeOpenAIProjectApiKeysByServiceAccountName(name) {
   const keys = await listOpenAIProjectApiKeys();
   const matches = keys.filter((item) => item.ownerName === name || item.name === name);
+  let revoked = 0;
+  let lastError;
   for (const match of matches) {
-    await revokeOpenAIProjectApiKey(match.id);
+    try {
+      await revokeOpenAIProjectApiKey(match.id);
+      revoked++;
+    } catch (error) {
+      if (String(error?.message || error).includes("owned by a service account") && match.ownerId) {
+        await revokeOpenAISessionKey(match.ownerId);
+        revoked++;
+      } else {
+        lastError = error;
+      }
+    }
   }
-  return matches.length;
+  if (revoked === 0 && lastError) throw lastError;
+  return revoked;
 }
 
 export async function revokeOpenAISessionKeyByName(name) {
