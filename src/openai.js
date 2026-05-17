@@ -190,28 +190,34 @@ export async function revokeOpenAIProjectApiKeysByServiceAccountName(name) {
 }
 
 export async function revokeOpenAISessionKeyByName(name) {
-  // The sensitive credential is the project API key, not the service-account shell.
-  // OpenAI currently lists service accounts as user-* ids, while the service-account
-  // DELETE endpoint may reject those ids. Revoke matching project API keys first.
-  const revokedApiKeys = await revokeOpenAIProjectApiKeysByServiceAccountName(name);
-
-  const keys = await listOpenAISessionKeys();
-  const matches = keys.filter((item) => item.name === name);
+  // For service-account-owned keys, OpenAI rejects direct API-key deletion and
+  // requires deleting/removing the service account/project user. Do that first.
+  const serviceAccounts = await listOpenAISessionKeys();
+  const matches = serviceAccounts.filter((item) => item.name === name);
   let revokedServiceAccounts = 0;
+  let lastError;
+
   for (const match of matches) {
     const candidates = match.idCandidates?.length ? match.idCandidates : [match.id];
     for (const id of candidates) {
       try {
         await revokeOpenAISessionKey(id);
         revokedServiceAccounts++;
+        lastError = undefined;
         break;
-      } catch {
-        // Service-account deletion is best effort. Revoking the project API key is
-        // what removes credential access.
+      } catch (error) {
+        lastError = error;
       }
     }
   }
-  return revokedApiKeys + revokedServiceAccounts;
+
+  if (revokedServiceAccounts > 0) return revokedServiceAccounts;
+
+  // Fallback for non-service-account project API keys with eph names.
+  const revokedApiKeys = await revokeOpenAIProjectApiKeysByServiceAccountName(name);
+  if (revokedApiKeys > 0) return revokedApiKeys;
+  if (lastError) throw lastError;
+  return 0;
 }
 
 export function redactOpenAIObject(value) {

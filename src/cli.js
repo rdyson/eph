@@ -247,19 +247,25 @@ async function cleanupCommand(args = []) {
   const now = new Date();
   const all = args.includes("--all");
   const serviceAccounts = (await listOpenAISessionKeys()).filter((k) => k.name.startsWith("eph-"));
-  const apiKeys = (await listOpenAIProjectApiKeys()).filter((k) => k.ownerName.startsWith("eph-") || k.name.startsWith("eph-"));
   let revoked = 0;
+  const handledServiceAccountNames = new Set();
   for (const key of serviceAccounts) {
     const exp = parseExpiryFromName(key.name);
     if (all || (exp && exp <= now)) {
       const count = await revokeOpenAISessionKeyByName(key.name);
+      handledServiceAccountNames.add(key.name);
       if (count > 0) {
         revoked += count;
         console.log(`revoked service account/API credential\t${key.name}`);
       }
     }
   }
+
+  // Refresh after service-account deletion. Any service-account-owned API keys
+  // should have disappeared; remaining eph keys can be deleted directly.
+  const apiKeys = (await listOpenAIProjectApiKeys()).filter((k) => k.ownerName.startsWith("eph-") || k.name.startsWith("eph-"));
   for (const key of apiKeys) {
+    if (handledServiceAccountNames.has(key.ownerName)) continue;
     const exp = parseExpiryFromName(key.ownerName || key.name);
     if (all || (exp && exp <= now)) {
       try {
