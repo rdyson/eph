@@ -6,6 +6,7 @@ import {
   ephKeyName,
   listOpenAISessionKeys,
   parseExpiryFromName,
+  redactOpenAIObject,
   revokeOpenAISessionKey,
   revokeOpenAISessionKeyByName,
 } from "./openai.js";
@@ -173,8 +174,9 @@ function runRemotePi({ host, provider, apiKey, task, remotePi }) {
     `cleanup() { unset ${providerEnvVar(provider)}; rm -rf "$EPH_TMP"; }`,
     `trap cleanup EXIT INT TERM`,
     `REMOTE_PI=${shellQuote(remotePi)}`,
-    `if ! command -v "$REMOTE_PI" >/dev/null 2>&1; then for candidate in "$HOME/.local/bin/pi" "$HOME/.local/share/pi-node"/*/bin/pi; do if [ -x "$candidate" ]; then REMOTE_PI="$candidate"; break; fi; done; fi`,
+    `if command -v "$REMOTE_PI" >/dev/null 2>&1; then REMOTE_PI="$(command -v "$REMOTE_PI")"; else for candidate in "$HOME/.local/bin/pi" "$HOME/.local/share/pi-node"/*/bin/pi; do if [ -x "$candidate" ]; then REMOTE_PI="$candidate"; break; fi; done; fi`,
     `command -v "$REMOTE_PI" >/dev/null 2>&1 || { echo "eph: remote Pi command not found: ${remotePi}" >&2; echo "Install Pi or pass --remote-pi /path/to/pi" >&2; exit 127; }`,
+    `export PATH="$(dirname "$REMOTE_PI"):$PATH"`,
     task
       ? `"$REMOTE_PI" --no-session --provider ${shellQuote(provider)} "$EPH_TASK"`
       : `"$REMOTE_PI" --no-session --provider ${shellQuote(provider)}`,
@@ -193,10 +195,17 @@ async function keysCommand(args) {
     return;
   }
   if (sub === "list") {
+    const json = args.includes("--json");
     const keys = await listOpenAISessionKeys();
-    for (const key of keys.filter((k) => k.name.startsWith("eph-"))) {
+    const ephKeys = keys.filter((k) => k.name.startsWith("eph-"));
+    if (json) {
+      console.log(JSON.stringify(ephKeys.map((key) => redactOpenAIObject(key)), null, 2));
+      return;
+    }
+    for (const key of ephKeys) {
       const exp = parseExpiryFromName(key.name);
-      console.log(`${key.id}\t${key.name}\t${exp ? exp.toISOString() : "no-expiry-in-name"}`);
+      const ids = key.idCandidates?.length ? key.idCandidates.join(",") : key.id;
+      console.log(`${key.id}\t${key.name}\t${exp ? exp.toISOString() : "no-expiry-in-name"}\tids=${ids}`);
     }
     return;
   }

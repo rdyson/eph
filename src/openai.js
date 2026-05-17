@@ -48,6 +48,20 @@ function getServiceAccountApiKey(body) {
   return undefined;
 }
 
+function serviceAccountIdCandidates(item) {
+  return [
+    item.service_account_id,
+    item.serviceAccountId,
+    item.service_account?.id,
+    item.serviceAccount?.id,
+    item.id,
+  ].filter((value, index, array) => typeof value === "string" && value && array.indexOf(value) === index);
+}
+
+function serviceAccountPrimaryId(item) {
+  return serviceAccountIdCandidates(item)[0];
+}
+
 export async function createOpenAISessionKey({ name }) {
   const { projectId } = requireOpenAIConfig();
   const body = await openAIRequest(`/organization/projects/${encodeURIComponent(projectId)}/service_accounts`, {
@@ -56,7 +70,7 @@ export async function createOpenAISessionKey({ name }) {
   });
 
   const apiKey = getServiceAccountApiKey(body);
-  let id = body.service_account?.id || body.serviceAccount?.id;
+  let id = serviceAccountPrimaryId(body);
 
   // Some OpenAI responses include a user-* id on create, while the DELETE endpoint
   // expects the service-account id returned by list. Prefer the listed id when we
@@ -95,7 +109,8 @@ export async function listOpenAISessionKeys() {
   });
   const data = Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : [];
   return data.map((item) => ({
-    id: item.id,
+    id: serviceAccountPrimaryId(item),
+    idCandidates: serviceAccountIdCandidates(item),
     name: item.name || "",
     createdAt: item.created_at || item.createdAt,
     raw: item,
@@ -113,10 +128,37 @@ export async function revokeOpenAISessionKey(id) {
 export async function revokeOpenAISessionKeyByName(name) {
   const keys = await listOpenAISessionKeys();
   const matches = keys.filter((item) => item.name === name);
+  let revoked = 0;
+  let lastError;
   for (const match of matches) {
-    await revokeOpenAISessionKey(match.id);
+    const candidates = match.idCandidates?.length ? match.idCandidates : [match.id];
+    for (const id of candidates) {
+      try {
+        await revokeOpenAISessionKey(id);
+        revoked++;
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
   }
-  return matches.length;
+  if (revoked === 0 && lastError) throw lastError;
+  return revoked;
+}
+
+export function redactOpenAIObject(value) {
+  if (Array.isArray(value)) return value.map(redactOpenAIObject);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => {
+      const lower = key.toLowerCase();
+      if (lower.includes("secret") || lower === "value" || lower === "api_key" || lower === "apikey") {
+        return [key, typeof entry === "string" ? "[redacted]" : redactOpenAIObject({ ...entry, value: "[redacted]" })];
+      }
+      return [key, redactOpenAIObject(entry)];
+    })
+  );
 }
 
 export function ephKeyName(label = "session", ttlSeconds = 7200) {
