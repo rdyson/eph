@@ -4,9 +4,11 @@ import { stdin as input, stdout as output } from "node:process";
 import {
   createOpenAISessionKey,
   ephKeyName,
+  listOpenAIProjectApiKeys,
   listOpenAISessionKeys,
   parseExpiryFromName,
   redactOpenAIObject,
+  revokeOpenAIProjectApiKey,
   revokeOpenAISessionKey,
   revokeOpenAISessionKeyByName,
 } from "./openai.js";
@@ -112,15 +114,18 @@ async function acquireCredential(opts, label) {
 }
 
 async function revokeIfManaged(credential) {
-  if (credential?.mode !== "managed" || !credential.id) return;
-  console.error(`Revoking OpenAI session key: ${credential.id}`);
-  try {
-    await revokeOpenAISessionKey(credential.id);
-  } catch (error) {
-    if (!credential.name) throw error;
-    console.error(`Direct revoke failed; retrying by service account name: ${credential.name}`);
+  if (credential?.mode !== "managed") return;
+  console.error(`Revoking OpenAI session credential: ${credential.name || credential.id || credential.apiKeyId}`);
+  if (credential.apiKeyId) {
+    await revokeOpenAIProjectApiKey(credential.apiKeyId);
+    return;
+  }
+  if (credential.name) {
     const count = await revokeOpenAISessionKeyByName(credential.name);
-    if (count === 0) throw error;
+    if (count > 0) return;
+  }
+  if (credential.id) {
+    await revokeOpenAISessionKey(credential.id);
   }
 }
 
@@ -197,23 +202,33 @@ async function keysCommand(args) {
   }
   if (sub === "list") {
     const json = args.includes("--json");
-    const keys = await listOpenAISessionKeys();
-    const ephKeys = keys.filter((k) => k.name.startsWith("eph-"));
+    const serviceAccounts = (await listOpenAISessionKeys()).filter((k) => k.name.startsWith("eph-"));
+    const apiKeys = (await listOpenAIProjectApiKeys()).filter((k) => k.ownerName.startsWith("eph-") || k.name.startsWith("eph-"));
     if (json) {
-      console.log(JSON.stringify(ephKeys.map((key) => redactOpenAIObject(key)), null, 2));
+      console.log(JSON.stringify(redactOpenAIObject({ serviceAccounts, apiKeys }), null, 2));
       return;
     }
-    for (const key of ephKeys) {
+    console.log("Service accounts:");
+    for (const key of serviceAccounts) {
       const exp = parseExpiryFromName(key.name);
       const ids = key.idCandidates?.length ? key.idCandidates.join(",") : key.id;
       console.log(`${key.id}\t${key.name}\t${exp ? exp.toISOString() : "no-expiry-in-name"}\tids=${ids}`);
+    }
+    console.log("API keys:");
+    for (const key of apiKeys) {
+      const exp = parseExpiryFromName(key.ownerName || key.name);
+      console.log(`${key.id}\towner=${key.ownerName || "unknown"}\t${exp ? exp.toISOString() : "no-expiry-in-owner"}`);
     }
     return;
   }
   if (sub === "revoke") {
     const id = args[1];
     if (!id) throw new Error("Usage: eph keys revoke <id>");
-    await revokeOpenAISessionKey(id);
+    try {
+      await revokeOpenAIProjectApiKey(id);
+    } catch {
+      await revokeOpenAISessionKey(id);
+    }
     console.log(`revoked ${id}`);
     return;
   }
@@ -222,17 +237,24 @@ async function keysCommand(args) {
 
 async function cleanupCommand() {
   const now = new Date();
-  const keys = await listOpenAISessionKeys();
+  const serviceAccounts = (await listOpenAISessionKeys()).filter((k) => k.name.startsWith("eph-"));
+  const apiKeys = (await listOpenAIProjectApiKeys()).filter((k) => k.ownerName.startsWith("eph-") || k.name.startsWith("eph-"));
   let revoked = 0;
-  for (const key of keys.filter((k) => k.name.startsWith("eph-"))) {
-    const exp = parseExpiryFromName(key.name);
+  for (const key of apiKeys) {
+    const exp = parseExpiryFromName(key.ownerName || key.name);
     if (exp && exp <= now) {
-      await revokeOpenAISessionKey(key.id);
+      await revokeOpenAIProjectApiKey(key.id);
       revoked++;
-      console.log(`revoked ${key.id}\t${key.name}`);
+      console.log(`revoked api key ${key.id}\towner=${key.ownerName || key.name}`);
     }
   }
-  console.log(`cleanup complete: ${revoked} revoked`);
+  for (const key of serviceAccounts) {
+    const exp = parseExpiryFromName(key.name);
+    if (exp && exp <= now) {
+      await revokeOpenAISessionKeyByName(key.name);
+    }
+  }
+  console.log(`cleanup complete: ${revoked} API keys revoked`);
 }
 
 export async function main(argv) {

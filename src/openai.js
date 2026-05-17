@@ -48,6 +48,10 @@ function getServiceAccountApiKey(body) {
   return undefined;
 }
 
+function getServiceAccountApiKeyId(body) {
+  return body.api_key?.id || body.apiKey?.id || body.key?.id || body.api_key_id || body.apiKeyId;
+}
+
 function serviceAccountIdCandidates(item) {
   return [
     item.service_account_id,
@@ -96,6 +100,7 @@ export async function createOpenAISessionKey({ name }) {
 
   return {
     id,
+    apiKeyId: getServiceAccountApiKeyId(body),
     name: body.name || name,
     apiKey,
     raw: body,
@@ -117,6 +122,39 @@ export async function listOpenAISessionKeys() {
   }));
 }
 
+export async function listOpenAIProjectApiKeys() {
+  const { projectId } = requireOpenAIConfig();
+  const body = await openAIRequest(`/organization/projects/${encodeURIComponent(projectId)}/api_keys`, {
+    method: "GET",
+  });
+  const data = Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : [];
+  return data.map((item) => ({
+    id: item.id,
+    name: item.name || "",
+    createdAt: item.created_at || item.createdAt,
+    ownerName:
+      item.owner?.service_account?.name ||
+      item.owner?.serviceAccount?.name ||
+      item.service_account?.name ||
+      item.serviceAccount?.name ||
+      "",
+    ownerId:
+      item.owner?.service_account?.id ||
+      item.owner?.serviceAccount?.id ||
+      item.service_account?.id ||
+      item.serviceAccount?.id ||
+      "",
+    raw: item,
+  }));
+}
+
+export async function revokeOpenAIProjectApiKey(id) {
+  const { projectId } = requireOpenAIConfig();
+  await openAIRequest(`/organization/projects/${encodeURIComponent(projectId)}/api_keys/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function revokeOpenAISessionKey(id) {
   const { projectId } = requireOpenAIConfig();
   await openAIRequest(
@@ -125,26 +163,38 @@ export async function revokeOpenAISessionKey(id) {
   );
 }
 
+export async function revokeOpenAIProjectApiKeysByServiceAccountName(name) {
+  const keys = await listOpenAIProjectApiKeys();
+  const matches = keys.filter((item) => item.ownerName === name || item.name === name);
+  for (const match of matches) {
+    await revokeOpenAIProjectApiKey(match.id);
+  }
+  return matches.length;
+}
+
 export async function revokeOpenAISessionKeyByName(name) {
+  // The sensitive credential is the project API key, not the service-account shell.
+  // OpenAI currently lists service accounts as user-* ids, while the service-account
+  // DELETE endpoint may reject those ids. Revoke matching project API keys first.
+  const revokedApiKeys = await revokeOpenAIProjectApiKeysByServiceAccountName(name);
+
   const keys = await listOpenAISessionKeys();
   const matches = keys.filter((item) => item.name === name);
-  let revoked = 0;
-  let lastError;
+  let revokedServiceAccounts = 0;
   for (const match of matches) {
     const candidates = match.idCandidates?.length ? match.idCandidates : [match.id];
     for (const id of candidates) {
       try {
         await revokeOpenAISessionKey(id);
-        revoked++;
-        lastError = undefined;
+        revokedServiceAccounts++;
         break;
-      } catch (error) {
-        lastError = error;
+      } catch {
+        // Service-account deletion is best effort. Revoking the project API key is
+        // what removes credential access.
       }
     }
   }
-  if (revoked === 0 && lastError) throw lastError;
-  return revoked;
+  return revokedApiKeys + revokedServiceAccounts;
 }
 
 export function redactOpenAIObject(value) {
