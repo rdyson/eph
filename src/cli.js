@@ -117,8 +117,16 @@ async function revokeIfManaged(credential) {
   if (credential?.mode !== "managed") return;
   console.error(`Revoking OpenAI session credential: ${credential.name || credential.id || credential.apiKeyId}`);
   if (credential.apiKeyId) {
-    await revokeOpenAIProjectApiKey(credential.apiKeyId);
-    return;
+    try {
+      await revokeOpenAIProjectApiKey(credential.apiKeyId);
+      return;
+    } catch (error) {
+      if (!String(error?.message || error).includes("owned by a service account")) throw error;
+      if (!credential.name) throw error;
+      const count = await revokeOpenAISessionKeyByName(credential.name);
+      if (count > 0) return;
+      throw error;
+    }
   }
   if (credential.name) {
     const count = await revokeOpenAISessionKeyByName(credential.name);
