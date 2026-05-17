@@ -172,10 +172,12 @@ function runRemotePi({ host, provider, apiKey, task, remotePi }) {
     `mkdir -p "$PI_CODING_AGENT_DIR" "$PI_CODING_AGENT_SESSION_DIR"`,
     `cleanup() { unset ${providerEnvVar(provider)}; rm -rf "$EPH_TMP"; }`,
     `trap cleanup EXIT INT TERM`,
-    `command -v ${remotePi} >/dev/null 2>&1 || { echo "eph: remote Pi command not found: ${remotePi}" >&2; echo "Install Pi or pass --remote-pi /path/to/pi" >&2; exit 127; }`,
+    `REMOTE_PI=${shellQuote(remotePi)}`,
+    `if ! command -v "$REMOTE_PI" >/dev/null 2>&1; then for candidate in "$HOME/.local/bin/pi" "$HOME/.local/share/pi-node"/*/bin/pi; do if [ -x "$candidate" ]; then REMOTE_PI="$candidate"; break; fi; done; fi`,
+    `command -v "$REMOTE_PI" >/dev/null 2>&1 || { echo "eph: remote Pi command not found: ${remotePi}" >&2; echo "Install Pi or pass --remote-pi /path/to/pi" >&2; exit 127; }`,
     task
-      ? `${remotePi} --no-session --provider ${shellQuote(provider)} "$EPH_TASK"`
-      : `${remotePi} --no-session --provider ${shellQuote(provider)}`,
+      ? `"$REMOTE_PI" --no-session --provider ${shellQuote(provider)} "$EPH_TASK"`
+      : `"$REMOTE_PI" --no-session --provider ${shellQuote(provider)}`,
   ].join("; ");
 
   const result = spawnSync("ssh", ["-t", host, `bash -lc ${shellQuote(remoteCommand)}`], { stdio: "inherit" });
