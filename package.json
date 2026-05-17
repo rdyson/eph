@@ -1,0 +1,35 @@
+{
+  "name": "@rdyson/eph",
+  "version": "0.1.0",
+  "description": "Ephemeral AI sessions for remote machines without leaving long-lived API keys behind.",
+  "type": "module",
+  "bin": {
+    "eph": "./bin/eph.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "pi",
+    "openai",
+    "ssh",
+    "ephemeral",
+    "homelab",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "author": "Richard Dyson",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rdyson/eph.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ]
+}
