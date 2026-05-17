@@ -226,8 +226,16 @@ async function keysCommand(args) {
     if (!id) throw new Error("Usage: eph keys revoke <id>");
     try {
       await revokeOpenAIProjectApiKey(id);
-    } catch {
-      await revokeOpenAISessionKey(id);
+    } catch (error) {
+      const apiKeys = await listOpenAIProjectApiKeys();
+      const key = apiKeys.find((item) => item.id === id);
+      if (key?.ownerName) {
+        await revokeOpenAISessionKeyByName(key.ownerName);
+      } else if (key?.ownerId) {
+        await revokeOpenAISessionKey(key.ownerId);
+      } else {
+        await revokeOpenAISessionKey(id);
+      }
     }
     console.log(`revoked ${id}`);
     return;
@@ -241,18 +249,30 @@ async function cleanupCommand(args = []) {
   const serviceAccounts = (await listOpenAISessionKeys()).filter((k) => k.name.startsWith("eph-"));
   const apiKeys = (await listOpenAIProjectApiKeys()).filter((k) => k.ownerName.startsWith("eph-") || k.name.startsWith("eph-"));
   let revoked = 0;
-  for (const key of apiKeys) {
-    const exp = parseExpiryFromName(key.ownerName || key.name);
-    if (all || (exp && exp <= now)) {
-      await revokeOpenAIProjectApiKey(key.id);
-      revoked++;
-      console.log(`revoked api key ${key.id}\towner=${key.ownerName || key.name}`);
-    }
-  }
   for (const key of serviceAccounts) {
     const exp = parseExpiryFromName(key.name);
     if (all || (exp && exp <= now)) {
-      await revokeOpenAISessionKeyByName(key.name);
+      const count = await revokeOpenAISessionKeyByName(key.name);
+      if (count > 0) {
+        revoked += count;
+        console.log(`revoked service account/API credential\t${key.name}`);
+      }
+    }
+  }
+  for (const key of apiKeys) {
+    const exp = parseExpiryFromName(key.ownerName || key.name);
+    if (all || (exp && exp <= now)) {
+      try {
+        await revokeOpenAIProjectApiKey(key.id);
+        revoked++;
+        console.log(`revoked api key ${key.id}\towner=${key.ownerName || key.name}`);
+      } catch (error) {
+        if (!String(error?.message || error).includes("owned by a service account")) throw error;
+        if (key.ownerName) {
+          const count = await revokeOpenAISessionKeyByName(key.ownerName);
+          if (count > 0) revoked += count;
+        }
+      }
     }
   }
   console.log(`cleanup complete: ${revoked} API keys revoked`);

@@ -155,12 +155,29 @@ export async function revokeOpenAIProjectApiKey(id) {
   });
 }
 
+async function deleteOpenAIProjectUser(id) {
+  const { projectId } = requireOpenAIConfig();
+  await openAIRequest(`/organization/projects/${encodeURIComponent(projectId)}/users/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function revokeOpenAISessionKey(id) {
   const { projectId } = requireOpenAIConfig();
-  await openAIRequest(
-    `/organization/projects/${encodeURIComponent(projectId)}/service_accounts/${encodeURIComponent(id)}`,
-    { method: "DELETE" }
-  );
+  try {
+    await openAIRequest(
+      `/organization/projects/${encodeURIComponent(projectId)}/service_accounts/${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    );
+  } catch (error) {
+    // OpenAI lists project service accounts as user-* objects on some orgs.
+    // If the service-account endpoint rejects that id, remove the project user.
+    if (String(error?.message || error).includes("No service account found") || String(error?.message || error).includes("404")) {
+      await deleteOpenAIProjectUser(id);
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function revokeOpenAIProjectApiKeysByServiceAccountName(name) {
