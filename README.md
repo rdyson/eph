@@ -141,6 +141,8 @@ Remote host has Pi installed:
 ssh portainer 'pi --version'
 ```
 
+If Pi was installed by `pi.dev/install.sh` into `~/.local/share/pi-node/...`, `eph` auto-discovers it and adds Pi's bundled Node directory to `PATH` for the remote session. You usually do not need `--remote-pi`.
+
 Start the session:
 
 ```bash
@@ -175,23 +177,38 @@ Create a disposable OpenAI key manually:
 eph keys create portainer
 ```
 
-List active `eph-*` OpenAI service accounts:
+List active `eph-*` OpenAI service accounts and their owned API keys:
 
 ```bash
 eph keys list
 ```
 
-Revoke one:
+For debugging OpenAI response shapes, print redacted JSON:
 
 ```bash
-eph keys revoke svcacct_...
+eph keys list --json
 ```
 
-Revoke expired `eph-*` keys:
+Revoke one by API-key id or service-account/user id:
+
+```bash
+eph keys revoke key_...
+eph keys revoke user_...
+```
+
+Revoke expired `eph-*` credentials:
 
 ```bash
 eph cleanup
 ```
+
+Force-revoke all `eph-*` credentials, useful after testing:
+
+```bash
+eph cleanup --all
+```
+
+OpenAI service-account-owned API keys cannot be deleted directly. `eph` handles this by deleting/removing the owning service account/project user, which removes the owned API key.
 
 Run cleanup from cron/systemd on your trusted local machine if you use `eph` often.
 
