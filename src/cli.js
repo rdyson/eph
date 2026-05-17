@@ -26,7 +26,7 @@ Usage:
   eph keys create [label]               Create an OpenAI session key and print it
   eph keys list                         List eph OpenAI service accounts
   eph keys revoke <id>                  Revoke an OpenAI service account
-  eph cleanup                           Revoke expired eph OpenAI service accounts
+  eph cleanup [--all]                   Revoke expired eph OpenAI API keys, or all eph keys
 
 Options:
   --provider <openai|anthropic>         Provider for Pi (default: openai)
@@ -235,14 +235,15 @@ async function keysCommand(args) {
   throw new Error(`Unknown keys command: ${sub}`);
 }
 
-async function cleanupCommand() {
+async function cleanupCommand(args = []) {
   const now = new Date();
+  const all = args.includes("--all");
   const serviceAccounts = (await listOpenAISessionKeys()).filter((k) => k.name.startsWith("eph-"));
   const apiKeys = (await listOpenAIProjectApiKeys()).filter((k) => k.ownerName.startsWith("eph-") || k.name.startsWith("eph-"));
   let revoked = 0;
   for (const key of apiKeys) {
     const exp = parseExpiryFromName(key.ownerName || key.name);
-    if (exp && exp <= now) {
+    if (all || (exp && exp <= now)) {
       await revokeOpenAIProjectApiKey(key.id);
       revoked++;
       console.log(`revoked api key ${key.id}\towner=${key.ownerName || key.name}`);
@@ -250,7 +251,7 @@ async function cleanupCommand() {
   }
   for (const key of serviceAccounts) {
     const exp = parseExpiryFromName(key.name);
-    if (exp && exp <= now) {
+    if (all || (exp && exp <= now)) {
       await revokeOpenAISessionKeyByName(key.name);
     }
   }
@@ -269,7 +270,7 @@ export async function main(argv) {
     return;
   }
   if (positional[0] === "cleanup") {
-    await cleanupCommand();
+    await cleanupCommand(positional.slice(1));
     return;
   }
 
