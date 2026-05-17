@@ -7,6 +7,7 @@ import {
   listOpenAISessionKeys,
   parseExpiryFromName,
   revokeOpenAISessionKey,
+  revokeOpenAISessionKeyByName,
 } from "./openai.js";
 
 const VERSION = "0.1.0";
@@ -111,7 +112,14 @@ async function acquireCredential(opts, label) {
 async function revokeIfManaged(credential) {
   if (credential?.mode !== "managed" || !credential.id) return;
   console.error(`Revoking OpenAI session key: ${credential.id}`);
-  await revokeOpenAISessionKey(credential.id);
+  try {
+    await revokeOpenAISessionKey(credential.id);
+  } catch (error) {
+    if (!credential.name) throw error;
+    console.error(`Direct revoke failed; retrying by service account name: ${credential.name}`);
+    const count = await revokeOpenAISessionKeyByName(credential.name);
+    if (count === 0) throw error;
+  }
 }
 
 function shellQuote(s) {
@@ -164,12 +172,13 @@ function runRemotePi({ host, provider, apiKey, task, remotePi }) {
     `mkdir -p "$PI_CODING_AGENT_DIR" "$PI_CODING_AGENT_SESSION_DIR"`,
     `cleanup() { unset ${providerEnvVar(provider)}; rm -rf "$EPH_TMP"; }`,
     `trap cleanup EXIT INT TERM`,
+    `command -v ${remotePi} >/dev/null 2>&1 || { echo "eph: remote Pi command not found: ${remotePi}" >&2; echo "Install Pi or pass --remote-pi /path/to/pi" >&2; exit 127; }`,
     task
       ? `${remotePi} --no-session --provider ${shellQuote(provider)} "$EPH_TASK"`
       : `${remotePi} --no-session --provider ${shellQuote(provider)}`,
   ].join("; ");
 
-  const result = spawnSync("ssh", ["-t", host, "bash", "-lc", remoteCommand], { stdio: "inherit" });
+  const result = spawnSync("ssh", ["-t", host, `bash -lc ${shellQuote(remoteCommand)}`], { stdio: "inherit" });
   return result.status ?? 1;
 }
 

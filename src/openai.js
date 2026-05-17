@@ -56,7 +56,20 @@ export async function createOpenAISessionKey({ name }) {
   });
 
   const apiKey = getServiceAccountApiKey(body);
-  const id = body.id || body.service_account?.id || body.serviceAccount?.id;
+  let id = body.service_account?.id || body.serviceAccount?.id;
+
+  // Some OpenAI responses include a user-* id on create, while the DELETE endpoint
+  // expects the service-account id returned by list. Prefer the listed id when we
+  // can find the newly-created service account by exact name.
+  try {
+    const listed = await listOpenAISessionKeys();
+    const match = listed.find((item) => item.name === name);
+    if (match?.id) id = match.id;
+  } catch {
+    // If list is unavailable, fall back to ids present in the create response.
+  }
+
+  id ||= body.id;
 
   if (!id) {
     throw new Error(`OpenAI response did not include a service account id. Response keys: ${Object.keys(body).join(", ")}`);
@@ -95,6 +108,15 @@ export async function revokeOpenAISessionKey(id) {
     `/organization/projects/${encodeURIComponent(projectId)}/service_accounts/${encodeURIComponent(id)}`,
     { method: "DELETE" }
   );
+}
+
+export async function revokeOpenAISessionKeyByName(name) {
+  const keys = await listOpenAISessionKeys();
+  const matches = keys.filter((item) => item.name === name);
+  for (const match of matches) {
+    await revokeOpenAISessionKey(match.id);
+  }
+  return matches.length;
 }
 
 export function ephKeyName(label = "session", ttlSeconds = 7200) {
