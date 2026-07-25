@@ -139,6 +139,12 @@ Start an ephemeral Pi session on a remote host named `portainer` from your SSH c
 eph portainer
 ```
 
+OpenAI sessions default to `gpt-5.6-terra` with Pi's `high` thinking level. Override either for one session:
+
+```bash
+eph portainer --model gpt-5.6-sol --thinking medium
+```
+
 Start with an initial task:
 
 ```bash
@@ -268,10 +274,10 @@ A future proxy mode could make Anthropic truly ephemeral by giving the remote ho
 /tmp/eph-...
 ```
 
-It writes a 0600 env file there containing only the disposable session key and temporary Pi state paths. Then it starts:
+It writes a 0600 env file there containing only the disposable session key and temporary Pi state paths. For OpenAI, it then starts Pi with EPH's pinned model and thinking level:
 
 ```bash
-pi --no-session --provider openai
+pi --no-session --provider openai --model gpt-5.6-terra --thinking high
 ```
 
 with:

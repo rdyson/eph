@@ -15,6 +15,8 @@ import {
 } from "./openai.js";
 
 const VERSION = "0.1.0";
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-terra";
+const DEFAULT_OPENAI_THINKING = "high";
 
 function usage() {
   return `eph ${VERSION}
@@ -35,6 +37,8 @@ Usage:
 
 Options:
   --provider <openai|anthropic>         Provider for Pi (default: openai)
+  --model <model>                       Pi model (default for OpenAI: ${DEFAULT_OPENAI_MODEL})
+  --thinking <level>                    Pi thinking level (default for OpenAI: ${DEFAULT_OPENAI_THINKING})
   --prompt-key                          Prompt for a manual provider key instead of managed OpenAI
   --ttl <duration>                      Session key TTL for name/cleanup, e.g. 30m, 2h (default: 2h)
   --remote-pi <command>                 Remote Pi command (default: pi)
@@ -60,6 +64,8 @@ function parseDuration(input, fallbackSeconds = 7200) {
 function parseArgs(argv) {
   const opts = {
     provider: "openai",
+    model: undefined,
+    thinking: undefined,
     promptKey: false,
     local: false,
     ttlSeconds: 7200,
@@ -71,6 +77,8 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "-h" || arg === "--help") opts.help = true;
     else if (arg === "--provider") opts.provider = argv[++i];
+    else if (arg === "--model") opts.model = argv[++i];
+    else if (arg === "--thinking") opts.thinking = argv[++i];
     else if (arg === "--prompt-key") opts.promptKey = true;
     else if (arg === "--local") opts.local = true;
     else if (arg === "--ttl") opts.ttlSeconds = parseDuration(argv[++i]);
@@ -109,6 +117,13 @@ function providerEnvVar(provider) {
   if (provider === "openai") return "OPENAI_API_KEY";
   if (provider === "anthropic") return "ANTHROPIC_API_KEY";
   throw new Error(`Unsupported provider: ${provider}`);
+}
+
+function resolveModelOptions({ provider, model, thinking }) {
+  return {
+    model: model ?? (provider === "openai" ? DEFAULT_OPENAI_MODEL : undefined),
+    thinking: thinking ?? (provider === "openai" ? DEFAULT_OPENAI_THINKING : undefined),
+  };
 }
 
 async function acquireCredential(opts, label) {
@@ -174,7 +189,7 @@ function makeRemoteEnv({ provider, apiKey, task }) {
   ].join("\n") + "\n";
 }
 
-function runLocalPi({ provider, apiKey, task }) {
+function runLocalPi({ provider, apiKey, task, model, thinking }) {
   const envName = providerEnvVar(provider);
   const env = {
     ...process.env,
@@ -185,11 +200,13 @@ function runLocalPi({ provider, apiKey, task }) {
     PI_SKIP_VERSION_CHECK: "1",
   };
   const args = ["--no-session", "--provider", provider];
+  if (model) args.push("--model", model);
+  if (thinking) args.push("--thinking", thinking);
   if (task) args.push(task);
   return spawnSync("pi", args, { stdio: "inherit", env }).status ?? 1;
 }
 
-function runRemotePi({ host, provider, apiKey, task, remotePi }) {
+function runRemotePi({ host, provider, apiKey, task, model, thinking, remotePi }) {
   const session = `eph-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const remoteDir = `/tmp/${session}`;
   const envScript = makeRemoteEnv({ provider, apiKey, task });
@@ -212,10 +229,11 @@ function runRemotePi({ host, provider, apiKey, task, remotePi }) {
     `if command -v "$REMOTE_PI" >/dev/null 2>&1; then REMOTE_PI="$(command -v "$REMOTE_PI")"; else for candidate in "$HOME/.local/bin/pi" "$HOME/.local/share/pi-node"/*/bin/pi; do if [ -x "$candidate" ]; then REMOTE_PI="$candidate"; break; fi; done; fi`,
     `command -v "$REMOTE_PI" >/dev/null 2>&1 || { echo "eph: remote Pi command not found: ${remotePi}" >&2; echo "Install Pi or pass --remote-pi /path/to/pi" >&2; exit 127; }`,
     `export PATH="$(dirname "$REMOTE_PI"):$PATH"`,
-    task
-      ? `"$REMOTE_PI" --no-session --provider ${shellQuote(provider)} "$EPH_TASK"`
-      : `"$REMOTE_PI" --no-session --provider ${shellQuote(provider)}`,
-  ].join("; ");
+    `set -- --no-session --provider ${shellQuote(provider)}`,
+    model ? `set -- "$@" --model ${shellQuote(model)}` : "",
+    thinking ? `set -- "$@" --thinking ${shellQuote(thinking)}` : "",
+    task ? `"$REMOTE_PI" "$@" "$EPH_TASK"` : `"$REMOTE_PI" "$@"`,
+  ].filter(Boolean).join("; ");
 
   const result = spawnSync("ssh", ["-t", host, `bash -lc ${shellQuote(remoteCommand)}`], { stdio: "inherit" });
   return result.status ?? 1;
@@ -400,12 +418,13 @@ export async function main(argv) {
 
   const label = opts.local ? "local" : host;
   const credential = await acquireCredential(opts, label);
+  const { model, thinking } = resolveModelOptions(opts);
   let status = 1;
   try {
     if (opts.local) {
-      status = runLocalPi({ provider: opts.provider, apiKey: credential.apiKey, task });
+      status = runLocalPi({ provider: opts.provider, apiKey: credential.apiKey, task, model, thinking });
     } else {
-      status = runRemotePi({ host, provider: opts.provider, apiKey: credential.apiKey, task, remotePi: opts.remotePi });
+      status = runRemotePi({ host, provider: opts.provider, apiKey: credential.apiKey, task, model, thinking, remotePi: opts.remotePi });
     }
   } finally {
     await revokeIfManaged(credential);
